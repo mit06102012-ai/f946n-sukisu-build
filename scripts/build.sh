@@ -70,29 +70,26 @@ for cfg in \
   sed -i 's/^NDK_TRIPLE=.*/NDK_TRIPLE=/' "$cfg"
 done
 
-echo "[4/9] Apply KDP/RKP/DEFEX patches (if provided)"
-if compgen -G "$ROOT/patches/kdp/*.patch" > /dev/null; then
-  cd "$WORK/Kernel"
-  for p in "$ROOT"/patches/kdp/*.patch; do
-    echo "apply $p"
-    patch -p1 --forward < "$p"
-  done
-else
-  echo "WARNING: no patches/kdp/*.patch supplied; Samsung KDP/RKP may block SukiSU" >&2
-fi
+echo "[4/9] KernelSU Next Samsung KDP source"
+rm -rf "$WORK/kdp"
+git clone --depth=1 https://github.com/250965249/KernelSU-Next-Samsung.git "$WORK/kdp"
 
-echo "[5/9] SukiSU integration"
+echo "[5/9] Integrate KDP module"
 cd "$WORK/Kernel/kernel_platform/common"
-chmod u+w drivers/Makefile
+rm -rf drivers/kernelsu
+cp -a "$WORK/kdp/kernel" drivers/kernelsu
+chmod -R u+w drivers/kernelsu drivers/Makefile drivers/Kconfig
 grep -q 'kernelsu' drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
 
 chmod u+w arch/arm64/configs/gki_defconfig
 sed -i '/^CONFIG_LOCALVERSION=/d' arch/arm64/configs/gki_defconfig
 sed -i '/^# CONFIG_LOCALVERSION_AUTO/d' arch/arm64/configs/gki_defconfig
 cat >> arch/arm64/configs/gki_defconfig <<'EOF'
-CONFIG_KSU=y
-CONFIG_KPM=y
+CONFIG_KSU=m
+CONFIG_KSU_SAMSUNG_KDP=y
+CONFIG_KSU_SAMSUNG_RKP=y
+CONFIG_KSU_SAMSUNG_DEFEX=y
 CONFIG_KALLSYMS_ALL=y
 EOF
 
@@ -127,6 +124,16 @@ if [ ! -f "$IMG" ]; then
   exit 4
 fi
 echo "kernel release: $(cat "$(dirname "$IMG")/../../../../../include/config/kernel.release" 2>/dev/null || true)"
+
+KO="$(find "$WORK/Kernel/out" -name kernelsu.ko -print -quit)"
+if [ -z "$KO" ]; then
+  echo "kernelsu.ko not found" >&2
+  find "$WORK/Kernel/out" -name '*.ko' >&2 | head -20
+  exit 5
+fi
+cp "$KO" "$OUT/kernelsu.ko"
+echo "module: $KO"
+modinfo "$OUT/kernelsu.ko" | grep -E 'vermagic|name' || true
 
 echo "[7/9] Pack boot.img"
 MKBOOT="$WORK/Kernel/kernel_platform/tools/mkbootimg/mkbootimg.py"

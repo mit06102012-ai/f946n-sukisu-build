@@ -1,4 +1,4 @@
-name: Build F946N SukiSU kernel
+name: Build F946N KernelSU Next KDP module
 
 on:
   workflow_dispatch:
@@ -76,4 +76,5 @@ jobs:
           path: |
             work/out/F946N_sukisu_boot.tar
             work/out/F946N_sukisu_init_boot_patched.img
+            work/out/kernelsu.ko
           if-no-files-found: error
