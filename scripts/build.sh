@@ -35,7 +35,13 @@ unzip -p "$ASSETS/patch.zip" '*.tar.gz' | tar -xzf - -C "$WORK"
 
 echo "[3/9] Extract toolchain"
 mkdir -p "$WORK/Kernel/kernel_platform"
-tar -xzf "$ASSETS/toolchain.tar.gz" -C "$WORK/Kernel/kernel_platform"
+if tar -tzf "$ASSETS/toolchain.tar.gz" | head -20 | grep -q '^prebuilts/'; then
+  tar -xzf "$ASSETS/toolchain.tar.gz" -C "$WORK/Kernel/kernel_platform"
+else
+  mkdir -p "$WORK/Kernel/kernel_platform/prebuilts/clang/host/linux-x86/clang-r450784e"
+  tar -xzf "$ASSETS/toolchain.tar.gz" \
+    -C "$WORK/Kernel/kernel_platform/prebuilts/clang/host/linux-x86/clang-r450784e"
+fi
 CLANG_BIN="$(find "$WORK/Kernel/kernel_platform" -type f -path '*/clang-r450784e/bin/clang' | head -1 || true)"
 if [ -z "$CLANG_BIN" ]; then
   CLANG_BIN="$(find "$WORK/Kernel/kernel_platform" -type f -name clang -path '*/bin/clang' | head -1 || true)"
@@ -45,6 +51,24 @@ if [ -z "$CLANG_BIN" ]; then
   exit 3
 fi
 export PATH="$(dirname "$CLANG_BIN"):/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Host tool fallbacks for a clang-only toolchain.
+BT="$WORK/Kernel/kernel_platform/build/kernel/build-tools/path/linux-x86"
+if [ -d "$BT" ]; then
+  chmod u+w "$BT/bison" "$BT/flex" 2>/dev/null || true
+  rm -f "$BT/bison" "$BT/flex"
+  ln -s /usr/bin/bison "$BT/bison"
+  ln -s /usr/bin/flex "$BT/flex"
+fi
+
+# Samsung build expects exact NDK prebuilts; blank it when only clang is present.
+for cfg in \
+  "$WORK/Kernel/kernel_platform/common/build.config.aarch64" \
+  "$WORK/Kernel/kernel_platform/msm-kernel/build.config.aarch64"; do
+  [ -f "$cfg" ] || continue
+  chmod u+w "$cfg"
+  sed -i 's/^NDK_TRIPLE=.*/NDK_TRIPLE=/' "$cfg"
+done
 
 echo "[4/9] Apply KDP/RKP/DEFEX patches (if provided)"
 if compgen -G "$ROOT/patches/kdp/*.patch" > /dev/null; then
@@ -86,8 +110,15 @@ export HERMETIC_TOOLCHAIN=0
 export LTO="$LTO_MODE"
 export PATH="$PATH"
 mkdir -p out/target/product/q5q
+mkdir -p out/target/product/q5q
+chmod u+x build_kernel_GKI.sh
+set +e
 printf 'y\n' | ./build_kernel_GKI.sh
-
+BUILD_RC=$?
+set -e
+if [ "$BUILD_RC" -ne 0 ]; then
+  echo "build.sh returned $BUILD_RC; checking for Image anyway" >&2
+fi
 IMG="$WORK/Kernel/out/msm-kalama-kalama-gki/gki_kernel/common/arch/arm64/boot/Image"
 if [ ! -f "$IMG" ]; then
   echo "Image not found: $IMG" >&2
