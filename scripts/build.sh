@@ -97,6 +97,7 @@ CONFIG_KALLSYMS_ALL=y
 EOF
 
 # Exact Samsung localversion suffix for boot/vendor modules
+chmod u+w scripts/setlocalversion
 cat > scripts/setlocalversion <<'EOF'
 #!/bin/sh
 printf '%s\n' '-29539737-abF946NKSS5DYBD'
