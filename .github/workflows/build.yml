@@ -74,6 +74,6 @@ jobs:
         with:
           name: f946n-sukisu
           path: |
-            out/F946N_sukisu_boot.tar
-            out/F946N_sukisu_init_boot_patched.img
+            work/out/F946N_sukisu_boot.tar
+            work/out/F946N_sukisu_init_boot_patched.img
           if-no-files-found: error
