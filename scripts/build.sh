@@ -78,6 +78,7 @@ echo "[5/9] Integrate KDP module"
 cd "$WORK/Kernel/kernel_platform/common"
 rm -rf drivers/kernelsu
 cp -a "$WORK/kdp/kernel" drivers/kernelsu
+cp -a "$WORK/kdp/uapi" drivers/kernelsu/uapi
 chmod -R u+w drivers/kernelsu drivers/Makefile drivers/Kconfig
 grep -q 'kernelsu' drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
 grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
