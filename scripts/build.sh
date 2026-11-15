@@ -140,14 +140,20 @@ python3 "$MKBOOT" \
 cp "$ASSETS/init_boot_stock.img" "$OUT/init_boot.img"
 tar -cf "$OUT/F946N_sukisu_boot.tar" -C "$OUT" boot.img init_boot.img
 
-echo "[8/9] vbmeta disabled (unsigned boot; no Samsung key)"
+echo "[8/9] vbmeta disabled (optional; no Samsung key)"
 AVBTOOL="$WORK/avbtool"
 if [ ! -f "$AVBTOOL" ]; then
-  curl -LSs "https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool?format=TEXT" \
-    | base64 -d > "$AVBTOOL"
-  chmod +x "$AVBTOOL"
+  if curl -LSs "https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool?format=TEXT" \
+      | base64 -d > "$AVBTOOL" 2>/dev/null; then
+    chmod +x "$AVBTOOL"
+  else
+    rm -f "$AVBTOOL"
+    echo "WARNING: avbtool download failed; skipping vbmeta" >&2
+  fi
 fi
-python3 "$AVBTOOL" make_vbmeta_image --flags 2 --output "$OUT/F946N_sukisu_vbmeta_disabled.img"
+if [ -f "$AVBTOOL" ]; then
+  python3 "$AVBTOOL" make_vbmeta_image --flags 2 --output "$OUT/F946N_sukisu_vbmeta_disabled.img" || true
+fi
 
 echo "[9/9] Artifacts"
 cp "$OUT/init_boot.img" "$OUT/F946N_sukisu_init_boot_patched.img"
