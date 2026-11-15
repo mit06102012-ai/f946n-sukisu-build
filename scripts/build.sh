@@ -87,7 +87,7 @@ chmod u+w arch/arm64/configs/gki_defconfig
 sed -i '/^CONFIG_LOCALVERSION=/d' arch/arm64/configs/gki_defconfig
 sed -i '/^# CONFIG_LOCALVERSION_AUTO/d' arch/arm64/configs/gki_defconfig
 cat >> arch/arm64/configs/gki_defconfig <<'EOF'
-CONFIG_KSU=m
+CONFIG_KSU=y
 CONFIG_KSU_SAMSUNG_KDP=y
 CONFIG_KSU_SAMSUNG_RKP=y
 CONFIG_KSU_SAMSUNG_DEFEX=y
@@ -128,13 +128,12 @@ echo "kernel release: $(cat "$(dirname "$IMG")/../../../../../include/config/ker
 
 KO="$(find "$WORK/Kernel/out" -name kernelsu.ko -print -quit)"
 if [ -z "$KO" ]; then
-  echo "kernelsu.ko not found" >&2
-  find "$WORK/Kernel/out" -name '*.ko' >&2 | head -20
-  exit 5
+  echo "built-in KSU: no kernelsu.ko (expected)" >&2
+else
+  cp "$KO" "$OUT/kernelsu.ko"
+  echo "module: $KO"
+  modinfo "$OUT/kernelsu.ko" | grep -E 'vermagic|name' || true
 fi
-cp "$KO" "$OUT/kernelsu.ko"
-echo "module: $KO"
-modinfo "$OUT/kernelsu.ko" | grep -E 'vermagic|name' || true
 
 echo "[7/9] Pack boot.img"
 MKBOOT="$WORK/Kernel/kernel_platform/tools/mkbootimg/mkbootimg.py"
