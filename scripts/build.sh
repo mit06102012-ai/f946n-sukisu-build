@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="${GITHUB_WORKSPACE:-$ROOT}/work"
+ASSETS="$WORK/assets"
+OUT="$WORK/out"
+mkdir -p "$ASSETS" "$OUT"
+
+need=(
+  BASE_URL DTS_URL PATCH_URL TOOLCHAIN_URL
+  BOOT_URL INIT_BOOT_URL TARGET LTO_MODE
+)
+for v in "${need[@]}"; do
+  if [ -z "${!v:-}" ]; then
+    echo "Missing env: $v" >&2
+    exit 2
+  fi
+done
+
+echo "[1/9] Download assets"
+curl -L --fail --retry 3 -o "$ASSETS/base.zip" "$BASE_URL"
+curl -L --fail --retry 3 -o "$ASSETS/dts.zip" "$DTS_URL"
+curl -L --fail --retry 3 -o "$ASSETS/patch.zip" "$PATCH_URL"
+curl -L --fail --retry 3 -o "$ASSETS/toolchain.tar.gz" "$TOOLCHAIN_URL"
+curl -L --fail --retry 3 -o "$ASSETS/boot_stock.img" "$BOOT_URL"
+curl -L --fail --retry 3 -o "$ASSETS/init_boot_stock.img" "$INIT_BOOT_URL"
+
+echo "[2/9] Extract source"
+rm -rf "$WORK/Kernel"
+mkdir -p "$WORK/Kernel"
+unzip -p "$ASSETS/base.zip" Kernel.tar.gz | tar -xzf - -C "$WORK/Kernel"
+unzip -p "$ASSETS/dts.zip" '*.tar.gz' | tar -xzf - -C "$WORK"
+unzip -p "$ASSETS/patch.zip" '*.tar.gz' | tar -xzf - -C "$WORK"
+
+echo "[3/9] Extract toolchain"
+mkdir -p "$WORK/Kernel/kernel_platform"
+tar -xzf "$ASSETS/toolchain.tar.gz" -C "$WORK/Kernel/kernel_platform"
+CLANG_BIN="$(find "$WORK/Kernel/kernel_platform" -type f -path '*/clang-r450784e/bin/clang' | head -1 || true)"
+if [ -z "$CLANG_BIN" ]; then
+  CLANG_BIN="$(find "$WORK/Kernel/kernel_platform" -type f -name clang -path '*/bin/clang' | head -1 || true)"
+fi
+if [ -z "$CLANG_BIN" ]; then
+  echo "clang not found in toolchain" >&2
+  exit 3
+fi
+export PATH="$(dirname "$CLANG_BIN"):/usr/bin:/bin:/usr/sbin:/sbin"
+
+echo "[4/9] Apply KDP/RKP/DEFEX patches (if provided)"
+if compgen -G "$ROOT/patches/kdp/*.patch" > /dev/null; then
+  cd "$WORK/Kernel"
+  for p in "$ROOT"/patches/kdp/*.patch; do
+    echo "apply $p"
+    patch -p1 --forward < "$p"
+  done
+else
+  echo "WARNING: no patches/kdp/*.patch supplied; Samsung KDP/RKP may block SukiSU" >&2
+fi
+
+echo "[5/9] SukiSU integration"
+cd "$WORK/Kernel/kernel_platform/common"
+chmod u+w drivers/Makefile
+grep -q 'kernelsu' drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+
+chmod u+w arch/arm64/configs/gki_defconfig
+sed -i '/^CONFIG_LOCALVERSION=/d' arch/arm64/configs/gki_defconfig
+sed -i '/^# CONFIG_LOCALVERSION_AUTO/d' arch/arm64/configs/gki_defconfig
+cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+CONFIG_KSU=y
+CONFIG_KPM=y
+CONFIG_KALLSYMS_ALL=y
+EOF
+
+# Exact Samsung localversion suffix for boot/vendor modules
+cat > scripts/setlocalversion <<'EOF'
+#!/bin/sh
+printf '%s\n' '-29539737-abF946NKSS5DYBD'
+EOF
+chmod +x scripts/setlocalversion
+
+echo "[6/9] Build"
+cd "$WORK/Kernel"
+sed -i "s/^BUILD_TARGET=.*/BUILD_TARGET=${TARGET}/" build_kernel_GKI.sh
+export HERMETIC_TOOLCHAIN=0
+export LTO="$LTO_MODE"
+export PATH="$PATH"
+mkdir -p out/target/product/q5q
+printf 'y\n' | ./build_kernel_GKI.sh
+
+IMG="$WORK/Kernel/out/msm-kalama-kalama-gki/gki_kernel/common/arch/arm64/boot/Image"
+if [ ! -f "$IMG" ]; then
+  echo "Image not found: $IMG" >&2
+  find "$WORK/Kernel/out" -name Image -print >&2
+  exit 4
+fi
+echo "kernel release: $(cat "$(dirname "$IMG")/../../../../../include/config/kernel.release" 2>/dev/null || true)"
+
+echo "[7/9] Pack boot.img"
+MKBOOT="$WORK/Kernel/kernel_platform/tools/mkbootimg/mkbootimg.py"
+python3 "$MKBOOT" \
+  --kernel "$IMG" \
+  --ramdisk /dev/null \
+  --header_version 4 --pagesize 4096 \
+  --os_version 13.0.0 --os_patch_level 2025-03 \
+  -o "$OUT/boot.img"
+
+cp "$ASSETS/init_boot_stock.img" "$OUT/init_boot.img"
+tar -cf "$OUT/F946N_sukisu_boot.tar" -C "$OUT" boot.img init_boot.img
+
+echo "[8/9] vbmeta disabled (unsigned boot; no Samsung key)"
+AVBTOOL="$WORK/avbtool"
+if [ ! -f "$AVBTOOL" ]; then
+  curl -LSs "https://android.googlesource.com/platform/external/avb/+/refs/heads/main/avbtool?format=TEXT" \
+    | base64 -d > "$AVBTOOL"
+  chmod +x "$AVBTOOL"
+fi
+python3 "$AVBTOOL" make_vbmeta_image --flags 2 --output "$OUT/F946N_sukisu_vbmeta_disabled.img"
+
+echo "[9/9] Artifacts"
+cp "$OUT/init_boot.img" "$OUT/F946N_sukisu_init_boot_patched.img"
+ls -lh "$OUT"

@@ -1,0 +1,80 @@
+name: Build F946N SukiSU kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "URL to SM-F946B_14_Opensource.zip (base source)"
+        required: true
+      dts_url:
+        description: "URL to SM-F946N_KOR_14_Opensource_dts.zip"
+        required: true
+      patch_url:
+        description: "URL to F946BXXS5DYB3...F946NKSS5DYBD...zip"
+        required: true
+      toolchain_url:
+        description: "URL to Samsung toolchain.tar.gz (prebuilts)"
+        required: true
+      boot_url:
+        description: "URL to stock F946N_boot_stock.img"
+        required: true
+      init_boot_url:
+        description: "URL to stock F946N_init_boot_stock.img"
+        required: true
+      target:
+        description: "Samsung build target"
+        required: true
+        default: "q5q_kor_singlex"
+      lto:
+        description: "LTO mode"
+        required: true
+        default: "thin"
+        type: choice
+        options: [thin, none]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex libssl-dev libncurses-dev libelf-dev \
+            python3 git zip unzip lz4 device-tree-compiler \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            rsync cpio kmod dwarves zstd abigail-tools curl ca-certificates
+
+      - name: Build
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+          DTS_URL: ${{ inputs.dts_url }}
+          PATCH_URL: ${{ inputs.patch_url }}
+          TOOLCHAIN_URL: ${{ inputs.toolchain_url }}
+          BOOT_URL: ${{ inputs.boot_url }}
+          INIT_BOOT_URL: ${{ inputs.init_boot_url }}
+          TARGET: ${{ inputs.target }}
+          LTO_MODE: ${{ inputs.lto }}
+        run: bash scripts/build.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: f946n-sukisu
+          path: |
+            out/F946N_sukisu_boot.tar
+            out/F946N_sukisu_vbmeta_disabled.img
+            out/F946N_sukisu_init_boot_patched.img
+          if-no-files-found: error
